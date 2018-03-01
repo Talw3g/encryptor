@@ -14,6 +14,7 @@ error_chain!{
 
 }
 
+use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
 //use std::io;
@@ -22,6 +23,8 @@ use std::io::SeekFrom;
 use std::path::Path;
 //use std::iter::FromIterator;
 use std::collections::HashMap;
+use std::process::exit;
+use std::fmt;
 //use walkdir::WalkDir;
 
 fn main() {
@@ -52,6 +55,17 @@ struct Field {
     start: usize,
     len: usize,
     is_num: bool,
+}
+
+impl fmt::Display for Field {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f,"is_num: {}
+    value: {:?}
+    num_value: {:?}
+    start: {}
+    len: {}",
+            self.is_num, self.value, self.num_value, self.start, self.len)
+    }
 }
 
 fn header_init() -> HashMap<String,Field> {
@@ -88,7 +102,11 @@ fn header_init() -> HashMap<String,Field> {
 fn read_header(f: &mut File) -> Result<HashMap<String,Field>>{
     let mut header = header_init();
     let mut buffer = [0;512];
-    let _ = f.read(&mut buffer).chain_err(|| "Error reading header in file")?;
+    let n = f.read(&mut buffer)
+        .chain_err(|| format!("Error reading header in file {:?}",f))?;
+
+    if n == 0 { exit(0) }
+
     for (_, val) in header.iter_mut() {
         let vec: Vec<_> = buffer[val.start..val.start + val.len]
             .iter()
@@ -96,8 +114,10 @@ fn read_header(f: &mut File) -> Result<HashMap<String,Field>>{
             .map(|&y| y)
             .collect();
         if !vec.is_empty() {
-            let string = String::from_utf8(vec)
-                .chain_err(|| "Error converting from utf8")?;
+            let string = String::from(
+                String::from_utf8(vec)
+                .chain_err(|| "Error converting from utf8")?
+                .trim());
             if val.is_num {
                 val.num_value = Some(u64::from_str_radix(string.as_str(), 8)
                     .chain_err(|| "Error while parsing string to u64")?);
@@ -106,28 +126,22 @@ fn read_header(f: &mut File) -> Result<HashMap<String,Field>>{
         }
     }
 
-    let field = match header.get("magic") {
-        Some(x) => x.clone(),
-        None => panic!("File is not a tar archive"),
-    };
-    let magic = match field.value {
-        Some(val) => val.clone(),
-        None => panic!("File is not a tar archive"),
-    };
-    if magic == String::from("ustar") {
+/*
+    for (key, val) in header.iter() {
+        println!("{} {}",key,val);
+    }
+*/
+
+    let is_valid = header.get("magic")
+        .ok_or("No field 'magic' in header")?
+        .value.as_ref()
+        .ok_or("No 'magic' value")?
+        == &String::from("ustar");
+    if is_valid {
         return Ok(header)
+    } else {
+        bail!("not a tar archive")
     }
-    /*
-    if let Some(field) = header.get("magic") {
-        if let Some(ref magic) = field.value {
-            if magic == &String::from("ustar") {
-                return Ok(header)
-            }
-        }
-    }
-    */
-    println!("{:?}",header);
-    panic!("File is not a tar archive");
 }
 
 fn read_data(f: &mut File, header: &HashMap<String,Field>) -> Result<Vec<u8>> {
@@ -148,30 +162,38 @@ fn read_data(f: &mut File, header: &HashMap<String,Field>) -> Result<Vec<u8>> {
 }
 
 fn write_file(header: &HashMap<String,Field>, data: Vec<u8>) -> Result<()> {
-    let name = match header.get("name") {
-        Some(field) => match field.value {
-            Some(ref val) => val,
-            None => panic!("File has no valid name"),
-        },
-        None => panic!("No field 'name' in header\n{:?}", header),
+    let name = header.get("name").ok_or("No field 'name' in header")?
+        .value.as_ref().ok_or("No 'name' value")?;
+    let prefix = match header.get("prefix").ok_or("No field 'prefix' in header")?.value {
+        Some(ref val) => val.as_str(),
+        None => "",
     };
-    let pathbuf = Path::new("/home/thibault/test").join(&name);
-    let path = pathbuf.to_str().unwrap();
-    let mut fout = OpenOptions::new().write(true)
-        .create(true).open(path)
-        .chain_err(|| "Could not create file")?;
-    fout.write(&data)
-        .chain_err(|| "Error writing to file")?;
+
+    let pathbuf = Path::new("/home/thibault/test").join(&prefix).join(&name);
+    let path = pathbuf.as_path();
+
+    let _ = fs::create_dir_all(&path)
+        .chain_err(|| format!("Could not create directory {}", path.display()))?;
+    if path.is_file() {
+        let mut fout = OpenOptions::new().write(true)
+            .create(true).open(path)
+            .chain_err(|| format!("Could not create file {}",path.display()))?;
+        fout.write(&data)
+            .chain_err(|| "Error writing to file")?;
+    }
     Ok(())
+
 }
 
 
 fn run() -> Result<()> {
     let f = &mut File::open("/home/thibault/test/a.tar")
         .chain_err(|| "Could not open file")?;
-    let header = read_header(f)?;
-    let data = read_data(f, &header)?;
-    let _ = write_file(&header, data)?;
+    loop {
+        let header = read_header(f)?;
+        let data = read_data(f, &header)?;
+        let _ = write_file(&header, data)?;
+    }
 /*    for entry in WalkDir::new("/home/thibault/test") {
         let entry = entry.chain_err(|| "Path not found")?;
         let path = Path::new(entry
@@ -224,5 +246,4 @@ fn run() -> Result<()> {
         }
     }
 */
-    Ok(())
 }
