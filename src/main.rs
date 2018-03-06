@@ -46,45 +46,62 @@ fn main() {
     }
 }
 
-struct TarFile {
+struct TarArch {
     file: Option<File>,
 
 }
 
-impl TarFile {
+impl TarArch {
 
-    fn new(path: PathBuf) -> Result<(TarFile)> {
-        Ok(TarFile {
+    fn new(path: PathBuf) -> Result<(TarArch)> {
+        Ok(TarArch {
             file: Some(File::open(path)
                 .chain_err(|| "Could not open file")?),
         })
     }
 
-    fn next_element(&self) -> Option<TarElement> {
-        Some(TarElement {})
+    fn next_element(&mut self) -> Option<Result<TarElement>> {
+        let mut file = match self.file {
+            Some(ref mut f) => f,
+            None => return None,
+        };
+        let mut element = match TarElement::read_header(file) {
+            Some(Ok(el)) => el,
+            Some(Err(e)) => return Some(Err(e)),
+            None => return None,
+        };
+        Some(Ok(element))
     }
 
 }
 
-impl Iterator for TarFile {
-    type Item = TarElement;
-    fn next(&mut self) -> Option<TarElement> {
+impl Iterator for TarArch {
+    type Item = Result<TarElement>;
+    fn next(&mut self) -> Option<Result<TarElement>> {
         self.next_element()
     }
 }
 
 struct TarElement {
-
+    filename: String,
+    size: usize,
 }
 
 impl TarElement {
 
+    fn read_header(f: &mut File) -> Option<Result<TarElement>> {
+        let mut element = TarElement { filename: String::from("tata"), size: 0 };
+        bail!("tata !");
+        Some(Ok(element))
+    }
+
 }
 
 fn run() -> Result<()> {
-    let tarfile = TarFile::new(PathBuf::from("/tmp/a.tar"))?;
+    let archive = TarArch::new(PathBuf::from("/tmp/a.tar"))?;
 
-    for el in tarfile {
+    for el in archive {
+        ::std::process::exit(0);
 
     }
 
