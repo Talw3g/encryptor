@@ -116,41 +116,28 @@ impl TarElement {
 
         if n == 0 { return Ok(None) }
 
+        if buffer.iter().all(|&x| x == 0u8) {
+            let mut buffer = [0;512];
+            f.read(&mut buffer)
+                .chain_err(|| format!("Error reading header in file {:?}",f))?;
+            if buffer.iter().all(|&x| x == 0u8) {
+                return Ok(None)
+            }
+        }
+
         let element = TarElement {
-            name: match buf_to_string(&buffer[0..100])? {
-                Some(s) => s,
-                None => return Ok(None),
-            },
-            mode: match buf_to_num(&buffer[100..100+8])? {
-                Some(n) => n,
-                None => return Ok(None),
-            },
-            size: match buf_to_num(&buffer[124..124+12])? {
-                Some(n) => n,
-                None => return Ok(None),
-            },
-            magic: match buf_to_string(&buffer[257..257+6])? {
-                Some(s) => s,
-                None => return Ok(None),
-            },
-            user: match buf_to_string(&buffer[265..265+32])? {
-                Some(s) => s,
-                None => return Ok(None),
-            },
-            group: match buf_to_string(&buffer[297..297+32])? {
-                Some(s) => s,
-                None => return Ok(None),
-            },
-            prefix: match buf_to_string(&buffer[345..345+155])? {
-                Some(s) => s,
-                None => return Ok(None),
-            },
+            name: buf_to_string(&buffer[0..100])?,
+            mode: buf_to_num(&buffer[100..100+8])?,
+            size: buf_to_num(&buffer[124..124+12])?,
+            magic: buf_to_string(&buffer[257..257+6])?,
+            user: buf_to_string(&buffer[265..265+32])?,
+            group: buf_to_string(&buffer[297..297+32])?,
+            prefix: buf_to_string(&buffer[345..345+155])?,
             data: Vec::new(),
         };
 
         if element.magic != String::from("ustar") {
-            println!("magic value returns None");
-            return Ok(None)
+            bail!("Not a tar header")
         }
 
         Ok(Some(element))
@@ -183,7 +170,7 @@ fn offset(size: &usize, block: usize) -> i64 {
     }
 }
 
-fn buf_to_string(buf: &[u8]) -> Result<Option<String>> {
+fn buf_to_string(buf: &[u8]) -> Result<String> {
     let vec: Vec<_> = buf.iter()
         .take_while(|&x| x != &0u8)
         .map(|&y| y)
@@ -194,21 +181,19 @@ fn buf_to_string(buf: &[u8]) -> Result<Option<String>> {
         .chain_err(|| "Error converting to utf8")?
         .trim());
 
-    if string.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(string))
-    }
+    Ok(string)
 }
 
-fn buf_to_num(buf: &[u8]) -> Result<Option<usize>> {
-    let string = match buf_to_string(buf)? {
-        Some(s) => s,
-        None => return Ok(None),
-    };
+fn buf_to_num(buf: &[u8]) -> Result<usize> {
+    let string = buf_to_string(buf)?;
+
+    if string.is_empty() {
+        bail!("buf_to_num: string is empty")
+    }
+
     let num = usize::from_str_radix(string.as_str(), 8)
         .chain_err(|| "Error parsing string to usize")?;
-    Ok(Some(num))
+    Ok(num)
 }
 
 
@@ -224,6 +209,6 @@ fn run() -> Result<()> {
 //        ::std::process::exit(0);
     }
 
-
+    println!("EOF, quitting");
     Ok(())
 }
