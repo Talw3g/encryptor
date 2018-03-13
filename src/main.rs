@@ -16,7 +16,7 @@ error_chain!{
 
 use std::fs;
 use std::fs::File;
-//use std::fs::OpenOptions;
+use std::fs::OpenOptions;
 //use std::io;
 use std::io::prelude::*;
 use std::io::SeekFrom;
@@ -86,6 +86,7 @@ impl TarArch {
             None => return Ok(None),
         };
         element.read_data(file)?;
+        element.write_file()?;
         Ok(Some(element))
     }
 
@@ -159,11 +160,44 @@ impl TarElement {
         Ok(())
     }
 
+
+    fn write_file(&self) -> Result<()> {
+        let path = Path::new("/tmp/")
+            .join(&self.prefix)
+            .join(&self.name);
+
+        let dirpath = match self.typeflag {
+            TypeFlag::RegFile => {
+                path.parent().unwrap()
+            },
+            TypeFlag::Directory => {
+                path.as_path()
+            },
+            TypeFlag::SymLink => {
+                println!("Not creating symlinks, skipping {}", path.display());
+                return Ok(())
+            },
+        };
+
+        let _ = fs::create_dir_all(&dirpath)
+            .chain_err(|| format!("Could not create directory {}", dirpath.display()))?;
+
+        if self.typeflag == TypeFlag::RegFile {
+            let mut fout = OpenOptions::new().write(true)
+                .create(true).open(&path)
+                .chain_err(|| format!("Could not create file {}", path.display()))?;
+            fout.write(&self.data)
+                .chain_err(|| format!("Error writing to file {}", path.display()))?;
+        }
+        Ok(())
+    }
+
 }
 
 
 
 #[derive(Debug)]
+#[derive(PartialEq)]
 enum TypeFlag {
     RegFile,
     SymLink,
