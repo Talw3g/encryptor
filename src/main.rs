@@ -100,6 +100,7 @@ struct TarElement {
     name: String,
     mode: usize,
     size: usize,
+    typeflag: TypeFlag,
     magic: String,
     user: String,
     group: String,
@@ -114,8 +115,10 @@ impl TarElement {
         let n = f.read(&mut buffer)
             .chain_err(|| format!("Error reading header in file {:?}",f))?;
 
-        if n == 0 { return Ok(None) }
+        if n == 0 { bail!("Unexpected EOF") }
 
+
+        // Checking if we have two 512B-blocks of NUL (EOF)
         if buffer.iter().all(|&x| x == 0u8) {
             let mut buffer = [0;512];
             f.read(&mut buffer)
@@ -129,6 +132,7 @@ impl TarElement {
             name: buf_to_string(&buffer[0..100])?,
             mode: buf_to_num(&buffer[100..100+8])?,
             size: buf_to_num(&buffer[124..124+12])?,
+            typeflag: typeflag(buffer[156])?,
             magic: buf_to_string(&buffer[257..257+6])?,
             user: buf_to_string(&buffer[265..265+32])?,
             group: buf_to_string(&buffer[297..297+32])?,
@@ -145,9 +149,12 @@ impl TarElement {
 
 
     fn read_data(&mut self, f: &mut File) -> Result<()> {
-        f.take(self.size as u64).read_to_end(&mut self.data)
+        f.take(self.size as u64)
+            .read_to_end(&mut self.data)
             .chain_err(|| format!("Error reading file {}", self.name))?;
-        f.seek(SeekFrom::Current(offset(&self.size, 512)))
+        f.seek(
+            SeekFrom::Current(
+            offset(&self.size, 512)))
             .chain_err(|| "Error seeking position")?;
         Ok(())
     }
@@ -155,6 +162,26 @@ impl TarElement {
 }
 
 
+
+#[derive(Debug)]
+enum TypeFlag {
+    RegFile,
+    SymLink,
+    Directory,
+}
+
+
+
+
+fn typeflag(tf: u8) -> Result<TypeFlag> {
+    let tf = tf as char;
+    match tf {
+        '0'|'\0'|'7' => Ok(TypeFlag::RegFile),
+        '2'          => Ok(TypeFlag::SymLink),
+        '5'          => Ok(TypeFlag::Directory),
+        _            => bail!(format!("Unknown or unmanaged typeflag: {}", tf)),
+    }
+}
 
 
 fn offset(size: &usize, block: usize) -> i64 {
@@ -205,7 +232,7 @@ fn run() -> Result<()> {
 
     for el in archive {
         let el = el?;
-        println!("name: {:?}\nsize: {:?}\nmagic: {:?}",el.name, el.size, el.magic);
+        println!("name: {:?}\nsize: {:?}\nmagic: {:?}\ntypeflag: {:?}",el.name, el.size, el.magic, el.typeflag);
 //        ::std::process::exit(0);
     }
 
